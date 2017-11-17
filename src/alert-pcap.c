@@ -247,11 +247,11 @@ int AlertPcapLogProcess(ThreadVars *t, void *thread_data, const Packet *p) {
              td->apl_data->directory, timebuf, srcip, dstip);
 
     if (p->flow->proto == IPPROTO_ICMP) {
-        snprintf(filename, sizeof(filename), "%s/%s-%s-%s-%u.ICMP.pcap",
-                 directory, srcip, dstip, timebuf, p->alerts.alerts[0].s->id);
+        snprintf(filename, sizeof(filename), "%s/%s-%s-%s.ICMP.pcap",
+                 directory, srcip, dstip, timebuf);
     } else {
-        snprintf(filename, sizeof(filename), "%s/%s:%hu-%s:%hu-%s.%s-%u.pcap",
-                 directory, srcip, p->flow->sp, dstip, p->flow->dp, timebuf, proto, p->alerts.alerts[0].s->id);
+        snprintf(filename, sizeof(filename), "%s/%s:%hu-%s:%hu-%s.%s.pcap",
+                 directory, srcip, p->flow->sp, dstip, p->flow->dp, timebuf, proto);
     }    
 
     SCMutexLock(&td->apl_data->apl_lock);
