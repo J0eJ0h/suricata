@@ -48,6 +48,10 @@
 #include "stream-tcp-reassemble.h"
 #include "stream-tcp.h"
 
+#include "timemachine.h"
+#include "timemachine-heap.h"
+#include "timemachine-packet.h"
+
 #include "util-unittest.h"
 #include "util-unittest-helper.h"
 #include "util-byte.h"
@@ -87,9 +91,18 @@ void FlowInitFlowProto();
 int FlowSetProtoTimeout(uint8_t , uint32_t ,uint32_t ,uint32_t);
 int FlowSetProtoEmergencyTimeout(uint8_t , uint32_t ,uint32_t ,uint32_t);
 int FlowSetProtoFreeFunc(uint8_t, void (*Free)(void *));
+void FlowHandleTimeMachine(DecodeThreadVars*, Packet*);
 
 /* Run mode selected at suricata.c */
 extern int run_mode;
+
+int SCMutexLockFlow(pthread_mutex_t* mutex) {
+    return SCMutexLock(mutex);
+}
+
+int SCMutexUnlockFlow(pthread_mutex_t* mutex) {
+    return SCMutexUnlock(mutex);
+}
 
 void FlowCleanupAppLayer(Flow *f)
 {
@@ -100,6 +113,25 @@ void FlowCleanupAppLayer(Flow *f)
     f->alstate = NULL;
     f->alparser = NULL;
     return;
+}
+
+/** \brief Clean up the TimeMachine information associated with the flow
+ *
+ *  The Flow should already be locked by the time it enters this function
+ *
+ *  \param f Flow to cleanup the TimeMachine heaps for 
+ */
+void FlowCleanupTimeMachine(Flow *f) {
+    SCMutexLock(&f->tm_m);
+    /* for all packets associated with this flow, go ahead and deref them */
+    while (f->tm_pkt_cnt > 0) {
+        TimeMachinePacket* packet = TAILQ_FIRST(&f->tm_pkts);
+        TAILQ_REMOVE(&f->tm_pkts, packet, next);
+        packet->flow = NULL;
+        f->tm_pkt_cnt--;
+    }
+    (f)->tm_pkt_cnt = 0;
+    SCMutexUnlock(&f->tm_m);
 }
 
 /** \brief Make sure we have enough spare flows. 
@@ -212,6 +244,141 @@ static inline int FlowUpdateSeenFlag(const Packet *p)
     return 1;
 }
 
+
+/**
+ *  \brief Process a packet and add to TimeMachine
+ *
+ *  \param dtv DecodeThreadVars
+ *  \param p Packet
+ *
+ *  \retval TM_ECODE_OK on success
+ *  \retval TM_ECODE_FAILED on serious error
+ */
+void FlowHandleTimeMachine(DecodeThreadVars* dtv, Packet* p) {
+    struct pcap_pkthdr pkthdr;
+
+    TimeMachineHeap *heap;
+    TimeMachineMemPool *mem_pool;
+    TimeMachinePacket *packet;
+    TimeMachineThreadVars* tmtv = dtv->timemachine_vars;
+
+    pkthdr.ts.tv_sec = p->ts.tv_sec;
+    pkthdr.ts.tv_usec = p->ts.tv_usec;
+    pkthdr.caplen = GET_PKT_LEN(p);
+    pkthdr.len = GET_PKT_LEN(p);
+
+    TAILQ_FOREACH(heap, &tmtv->heaps, next) {
+        if (pkthdr.caplen <= heap->conf->max_packet_size) {
+            break;
+        }
+    }  
+
+    /* no heap could be found to place this packet in, just return */
+    if (heap == NULL) {
+        return;
+    }
+
+    /* check the existing mempool for unused spots */
+    if (TAILQ_EMPTY(&heap->unused_mem_pools)) {
+
+        /* Check to see if we can expand, if so then expand */
+        if (TimeMachineHeapCanExpand(tmtv)) {
+            TimeMachineHeapExpand(tmtv, heap, heap->conf->expand_by); 
+        }
+        else {
+            Flow *rem_flow;
+            TimeMachineMemPool *rem_mem_pool;
+            TimeMachinePacket *rem_packet;
+
+            rem_mem_pool = TAILQ_FIRST(&heap->used_mem_pools);
+            rem_packet = rem_mem_pool->packet;
+            rem_flow = rem_packet->flow;
+
+            /* The flow associated with the packet is already locked.  We only want
+               to lock the flow that is being removed if it is NOT the already 
+               locked packet flow.  Also, for time machine we don't want to remove
+               packets that have already been removed from some other means */
+            if (rem_flow != NULL) {
+                SCMutexLock(&rem_flow->tm_m);
+                TAILQ_REMOVE(&rem_flow->tm_pkts, rem_packet, next);
+                rem_flow->tm_pkt_cnt--;
+                SCMutexUnlock(&rem_flow->tm_m);
+            }
+
+            TAILQ_REMOVE(&heap->used_mem_pools, rem_mem_pool, next);
+            heap->used_pool_count--;
+
+            rem_mem_pool->packet = NULL;
+            TAILQ_INSERT_TAIL(&heap->unused_mem_pools, rem_mem_pool, next);
+            TAILQ_INSERT_TAIL(&heap->unused_packets, rem_packet, next);
+            heap->unused_pool_count++;
+        }
+    }
+
+    /* remove the heap from the unused to used list */
+    mem_pool = TAILQ_FIRST(&heap->unused_mem_pools);
+    TAILQ_REMOVE(&heap->unused_mem_pools, mem_pool, next);
+    heap->unused_pool_count--;
+
+    TAILQ_INSERT_TAIL(&heap->used_mem_pools, mem_pool, next);
+    heap->used_pool_count++;
+
+    /* remove the packet from the unused to used list */
+    packet = TAILQ_FIRST(&heap->unused_packets);
+    TAILQ_REMOVE(&heap->unused_packets, packet, next);
+    SCMutexLock(&p->flow->tm_m);
+    TAILQ_INSERT_TAIL(&p->flow->tm_pkts, packet, next);  
+
+    /* make sure this heap points to the corresponding packet */
+    mem_pool->packet = packet;
+    memcpy(&packet->header, &pkthdr, sizeof(struct pcap_pkthdr));
+
+    packet->data = mem_pool->mem;
+    memcpy(packet->data, GET_PKT_DATA(p), GET_PKT_LEN(p));
+
+    /* make sure the packet is associated with a flow */
+    packet->flow = p->flow;
+    p->flow->tm_pkt_cnt++;
+    SCMutexUnlock(&p->flow->tm_m);
+}
+
+/**
+ *
+ *  Remove packet from flow. This assumes this happens *before* the packet
+ *  is added to the stream engine and other higher state.
+ *
+ *  \todo we can't restore the lastts
+ */
+void FlowHandlePacketUpdateRemove(Flow *f, Packet *p)
+{
+    if (p->flowflags & FLOW_PKT_TOSERVER) {
+        f->todstpktcnt--;
+        f->todstbytecnt -= GET_PKT_LEN(p);
+        p->flowflags &= ~(FLOW_PKT_TOSERVER|FLOW_PKT_TOSERVER_FIRST);
+    } else {
+        f->tosrcpktcnt--;
+        f->tosrcbytecnt -= GET_PKT_LEN(p);
+        p->flowflags &= ~(FLOW_PKT_TOCLIENT|FLOW_PKT_TOCLIENT_FIRST);
+    }
+    p->flowflags &= ~FLOW_PKT_ESTABLISHED;
+
+    /*set the detection bypass flags*/
+    if (f->flags & FLOW_NOPACKET_INSPECTION) {
+        SCLogDebug("unsetting FLOW_NOPACKET_INSPECTION flag on flow %p", f);
+        DecodeUnsetNoPacketInspectionFlag(p);
+    }
+    if (f->flags & FLOW_NOPAYLOAD_INSPECTION) {
+        SCLogDebug("unsetting FLOW_NOPAYLOAD_INSPECTION flag on flow %p", f);
+        DecodeUnsetNoPayloadInspectionFlag(p);
+    }
+
+    /*set the whether the flow contains alerts */
+    if (f->flags & FLOW_CONTAINS_ALERTS) {
+        SCLogDebug("unsetting FLOW_CONTAINS_ALERTS flag on flow %p", f);
+        DecodeUnsetFlowContainsAlertsFlag(p);
+    }
+}
+
 /** \brief Update Packet and Flow
  *
  *  Updates packet and flow based on the new packet.
@@ -266,6 +433,12 @@ void FlowHandlePacketUpdate(Flow *f, Packet *p)
         SCLogDebug("setting FLOW_NOPAYLOAD_INSPECTION flag on flow %p", f);
         DecodeSetNoPayloadInspectionFlag(p);
     }
+
+    /*set whether the flow contains alerts */
+    if (f->flags & FLOW_CONTAINS_ALERTS) {
+        SCLogDebug("setting FLOW_CONTAINS_ALERTS flag on flow %p", f);
+        DecodeSetFlowContainsAlertsFlag(p);
+    }
 }
 
 /** \brief Entry point for packet flow handling
@@ -285,8 +458,25 @@ void FlowHandlePacket(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p)
     if (f == NULL)
         return;
 
+    FlowHandlePacketUpdate(f, p);
+
     /* set the flow in the packet */
     p->flags |= PKT_HAS_FLOW;
+
+    /* setup timemachine related stuff */
+    if (!(timemachine_config.enabled) ) {
+        // TODO: Keep empty packets!
+        return;
+    }   
+
+    /* we also won't add packets to timemachine if the flow is already marked
+     * to use timemachine (short circuits storage) */
+    if (f->flags & FLOW_CONTAINS_ALERTS) {
+        return;
+    }
+
+    /* find the queue the packet should fall in */
+    FlowHandleTimeMachine(dtv, p);
     return;
 }
 
@@ -417,6 +607,9 @@ void FlowInitConfig(char quiet)
     }
 
     FlowInitFlowProto();
+
+    /* enable the time machine config as well */
+    TimeMachineInitConfig();
 
     return;
 }

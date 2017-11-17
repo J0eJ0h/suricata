@@ -71,6 +71,9 @@
         (f)->lnext = NULL; \
         (f)->lprev = NULL; \
         RESET_COUNTERS((f)); \
+        (f)->tm_pkt_cnt = 0; \
+        TAILQ_INIT((&(f)->tm_pkts)); \
+        SCMutexInit(&f->tm_m, NULL); \
     } while (0)
 
 /** \brief macro to recycle a flow before it goes into the spare queue for reuse.
@@ -79,7 +82,9 @@
  *  managed by the queueing code. Same goes for fb (FlowBucket ptr) field.
  */
 #define FLOW_RECYCLE(f) do { \
+        FlowCleanupTimeMachine((f)); \
         FlowCleanupAppLayer((f)); \
+        FlowCleanupTimeMachine((f)); \
         (f)->sp = 0; \
         (f)->dp = 0; \
         (f)->proto = 0; \
@@ -112,9 +117,12 @@
         GenericVarFree((f)->flowvar); \
         (f)->flowvar = NULL; \
         RESET_COUNTERS((f)); \
+        TAILQ_INIT((&(f)->tm_pkts)); \
     } while(0)
 
 #define FLOW_DESTROY(f) do { \
+        FlowCleanupTimeMachine((f)); \
+        SCMutexDestroy(&(f)->tm_m); \
         FlowCleanupAppLayer((f)); \
         SC_ATOMIC_DESTROY((f)->flow_state); \
         SC_ATOMIC_DESTROY((f)->use_cnt); \

@@ -1,4 +1,4 @@
-/* Copyright (C) 2015-2016 Open Information Security Foundation
+/* Copyright (C) 2015 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -229,25 +229,40 @@ static void DetectTemplateFree(void *ptr) {
  * \test description of the test
  */
 
-static int DetectTemplateParseTest01 (void)
-{
-    DetectTemplateData *templated = DetectTemplateParse("1,10");
-    FAIL_IF_NULL(templated);
-    FAIL_IF(!(templated->arg1 == 1 && templated->arg2 == 10));
-    DetectTemplateFree(templated);
-    PASS;
+static int DetectTemplateParseTest01 (void) {
+    DetectTemplateData *templated = NULL;
+    uint8_t res = 0;
+
+    templated = DetectTemplateParse("1,10");
+    if (templated != NULL) {
+        if (templated->arg1 == 1 && templated->arg2 == 10)
+            res = 1;
+
+        DetectTemplateFree(templated);
+    }
+
+    return res;
 }
 
-static int DetectTemplateSignatureTest01 (void)
-{
+static int DetectTemplateSignatureTest01 (void) {
+    uint8_t res = 0;
+
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
-    FAIL_IF_NULL(de_ctx);
+    if (de_ctx == NULL)
+        goto end;
 
     Signature *sig = DetectEngineAppendSig(de_ctx, "alert ip any any -> any any (template:1,10; sid:1; rev:1;)");
-    FAIL_IF_NULL(sig);
+    if (sig == NULL) {
+        printf("parsing signature failed: ");
+        goto end;
+    }
 
-    DetectEngineCtxFree(de_ctx);
-    PASS;
+    /* if we get here, all conditions pass */
+    res = 1;
+end:
+    if (de_ctx != NULL)
+        DetectEngineCtxFree(de_ctx);
+    return res;
 }
 
 #endif /* UNITTESTS */

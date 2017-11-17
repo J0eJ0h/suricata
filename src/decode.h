@@ -88,6 +88,8 @@ enum PktSrcEnum {
 
 #include "app-layer-protos.h"
 
+#include "timemachine.h"
+
 /* forward declarations */
 struct DetectionEngineThreadCtx_;
 typedef struct AppLayerThreadCtx_ AppLayerThreadCtx;
@@ -215,6 +217,7 @@ typedef struct Address_ {
 #define GET_PKT_DATA(p) ((((p)->ext_pkt) == NULL ) ? (uint8_t *)((p) + 1) : (p)->ext_pkt)
 #define GET_PKT_DIRECT_DATA(p) (uint8_t *)((p) + 1)
 #define GET_PKT_DIRECT_MAX_SIZE(p) (default_packet_size)
+#define GET_PKT_PAYLOAD_LEN(p) ((p)->payload_len)
 
 #define SET_PKT_LEN(p, len) do { \
     (p)->pktlen = (len); \
@@ -467,12 +470,10 @@ typedef struct Packet_
     /* Can only be one of TCP, UDP, ICMP at any given time */
     union {
         TCPVars tcpvars;
+        UDPVars udpvars;
         ICMPV4Vars icmpv4vars;
         ICMPV6Vars icmpv6vars;
-    } l4vars;
-#define tcpvars     l4vars.tcpvars
-#define icmpv4vars  l4vars.icmpv4vars
-#define icmpv6vars  l4vars.icmpv6vars
+    };
 
     TCPHdr *tcph;
 
@@ -644,6 +645,10 @@ typedef struct DecodeThreadVars_
      * flow recycle during lookups */
     void *output_flow_thread_data;
 
+    /* Specific thread vars used for TimeMachine.  Put here to enable
+     * usage by multiple OutputCtx's */
+    TimeMachineThreadVars *timemachine_vars;
+        
 #ifdef __SC_CUDA_SUPPORT__
     CudaThreadVars cuda_vars;
 #endif
@@ -660,10 +665,6 @@ typedef struct CaptureStats_ {
 
 void CaptureStatsUpdate(ThreadVars *tv, CaptureStats *s, const Packet *p);
 void CaptureStatsSetup(ThreadVars *tv, CaptureStats *s);
-
-#define PACKET_CLEAR_L4VARS(p) do {                         \
-        memset(&(p)->l4vars, 0x00, sizeof((p)->l4vars));    \
-    } while (0)
 
 /**
  *  \brief reset these to -1(indicates that the packet is fresh from the queue)
@@ -931,6 +932,18 @@ typedef int (*DecoderFunc)(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
 int DecoderParseDataFromFile(char *filename, DecoderFunc Decoder);
 #endif
 
+/** \brief Set that Timemachine Flag for the packet.
+ *
+ * \param p Packet to set the flag in
+ */
+#define DecodeSetFlowContainsAlertsFlag(p) do { \
+        (p)->flags |= PKT_FLOW_CONTAINS_ALERTS;    \
+    } while (0)
+
+#define DecodeUnsetFlowContainsAlertsFlag(p) do { \
+        (p)->flags &= ~PKT_FLOW_CONTAINS_ALERTS;      \
+    } while (0)
+
 /** \brief Set the No payload inspection Flag for the packet.
  *
  * \param p Packet to set the flag in
@@ -981,10 +994,6 @@ int DecoderParseDataFromFile(char *filename, DecoderFunc Decoder);
     } \
     r; \
 })
-
-#ifndef IPPROTO_IPIP
-#define IPPROTO_IPIP 4
-#endif
 
 /* older libcs don't contain a def for IPPROTO_DCCP
  * inside of <netinet/in.h>
@@ -1069,10 +1078,11 @@ int DecoderParseDataFromFile(char *filename, DecoderFunc Decoder);
 #define PKT_IS_FRAGMENT                 (1<<19)     /**< Packet is a fragment */
 #define PKT_IS_INVALID                  (1<<20)
 #define PKT_PROFILE                     (1<<21)
+#define PKT_FLOW_CONTAINS_ALERTS        (1<<22)     /**< Tag this packet with the fact it's flow contained an alert */
 
 /** indication by decoder that it feels the packet should be handled by
  *  flow engine: Packet::flow_hash will be set */
-#define PKT_WANTS_FLOW                  (1<<22)
+#define PKT_WANTS_FLOW                  (1<<23)
 
 /** \brief return 1 if the packet is a pseudo packet */
 #define PKT_IS_PSEUDOPKT(p) ((p)->flags & PKT_PSEUDO_STREAM_END)

@@ -15,12 +15,6 @@
  * 02110-1301, USA.
  */
 
-/**
- * \file
- *
- * \author FirstName LastName <name@domain>
- */
-
 #ifndef __OUTPUT_JSON_TEMPLATE_H__
 #define __OUTPUT_JSON_TEMPLATE_H__
 

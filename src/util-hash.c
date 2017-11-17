@@ -234,6 +234,10 @@ char HashTableDefaultCompare(void *data1, uint16_t len1, void *data2, uint16_t l
     return 1;
 }
 
+void HashTableDefaultFree(void* data) {
+    SCFree(data);
+}
+
 /*
  * ONLY TESTS BELOW THIS COMMENT
  */

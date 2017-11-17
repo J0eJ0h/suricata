@@ -677,6 +677,8 @@ typedef struct DetectEngineCtx_ {
     DetectPort *tcp_whitelist;
     DetectPort *udp_whitelist;
 
+    HashTable* pcap_sigs_hash_table;
+
 } DetectEngineCtx;
 
 /* Engine groups profiles (low, medium, high, custom) */

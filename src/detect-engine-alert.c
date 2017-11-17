@@ -27,6 +27,7 @@
 #include "flow.h"
 #include "flow-private.h"
 
+#include "util-misc.h"
 #include "util-profiling.h"
 
 /** tag signature we use for tag alerts */
@@ -54,6 +55,78 @@ PacketAlert *PacketAlertGetTag(void)
 {
     return &g_tag_pa;
 }
+
+/**
+ * \brief Initializes the hash table that is used for pcap sigs.
+ *
+ * \param de_ctx Pointer to the detection engine context.
+ *
+ * \retval  0 On success.
+ * \retval -1 On failure.
+ */
+int DetectPcapSigsHashInit(DetectEngineCtx *de_ctx)
+{
+    de_ctx->pcap_sigs_hash_table = HashTableInit(512,
+                                                   HashTableGenericHash,
+                                                   NULL,
+                                                   HashTableDefaultFree);
+    if (de_ctx->pcap_sigs_hash_table == NULL)
+        return -1;
+
+    ConfNode *de_ctx_custom = ConfGetNode("detect-engine");
+    if (de_ctx_custom != NULL) {
+        ConfNode* pcapsids = NULL;
+        ConfNode *opt = NULL;
+        TAILQ_FOREACH(opt, &de_ctx_custom->head, next) {
+            if (strcmp(opt->val, "pcap-sids") == 0) {
+                pcapsids = opt;
+            }
+        }
+        if (pcapsids != NULL) {
+            if (!ConfNodeIsSequence(pcapsids)) {
+                SCLogWarning(SC_ERR_INVALID_ARGUMENT,
+                    "Invalid pcap-sids configuration section: "
+                    "expected a list of sids.");
+            }
+            else {
+                ConfNode* sid;
+                TAILQ_FOREACH(sid, &(pcapsids->head.tqh_first->head), next) {
+                    uint32_t* psid = SCMalloc(sizeof(uint32_t));
+                    if(unlikely(psid == NULL)) {
+                        // Not much to be done on OOM.
+                        break;
+                    }
+                    if(SidFromString(sid->val, psid) >= 0) {
+                        if(HashTableAdd(de_ctx->pcap_sigs_hash_table, psid, sizeof(uint32_t)) < 0) {
+                            // Again on OOM, something else will fail and we'll ideally be gracefully torn down
+                            break;
+                        }
+                    } else {
+                        SCFree(psid);
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * \brief Frees the hash table that is used for pcap sigs.
+ *
+ * \param de_ctx Pointer to the detection engine context that holds this table.
+ */
+void DetectPcapSigsHashFree(DetectEngineCtx *de_ctx)
+{
+    if (de_ctx->pcap_sigs_hash_table != NULL)
+        HashTableFree(de_ctx->pcap_sigs_hash_table);
+
+    de_ctx->pcap_sigs_hash_table = NULL;
+
+    return;
+}
+
 
 /**
  * \brief Handle a packet and check if needs a threshold logic
@@ -328,6 +401,18 @@ void PacketAlertFinalize(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx
      * keyword context for sessions and hosts */
     if (!(p->flags & PKT_PSEUDO_STREAM_END))
         TagHandlePacket(de_ctx, det_ctx, p);
+
+    /* Set a flag to indicate that at least one packet contained within the 
+       flow has an alert so we can track that for future packets */
+    if (p->alerts.cnt > 0 && p->flow) {
+        i = 0;
+        while ( i < p->alerts.cnt) {
+            uint *psid =  &(p->alerts.alerts[i].s->id);
+            if (HashTableLookup(de_ctx->pcap_sigs_hash_table, psid, sizeof(*psid)) != NULL) {
+                p->flow->flags |= FLOW_CONTAINS_ALERTS;
+                break;
+            }
+            i++;
+        }
+    }
 }
-
-

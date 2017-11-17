@@ -76,6 +76,7 @@
 #include "alert-fastlog.h"
 #include "alert-unified2-alert.h"
 #include "alert-debuglog.h"
+#include "alert-pcap.h"
 #include "alert-prelude.h"
 #include "alert-syslog.h"
 #include "output-json-alert.h"
@@ -865,6 +866,8 @@ void RegisterAllModules()
     TmModuleAlertFastLogRegister();
     /* debug log */
     TmModuleAlertDebugLogRegister();
+    /* pcap alert log */
+    TmModuleAlertPcapLogRegister();
     /* prelue log */
     TmModuleAlertPreludeRegister();
     /* syslog log */
@@ -922,7 +925,6 @@ void RegisterAllModules()
     /* nflog */
     TmModuleReceiveNFLOGRegister();
     TmModuleDecodeNFLOGRegister();
-
 }
 
 static TmEcode LoadYamlConfig(SCInstance *suri)
@@ -1116,7 +1118,9 @@ static int ParseCommandLineAfpacket(SCInstance *suri, const char *optarg)
         if (optarg) {
             LiveRegisterDevice(optarg);
             memset(suri->pcap_dev, 0, sizeof(suri->pcap_dev));
-            strlcpy(suri->pcap_dev, optarg, sizeof(suri->pcap_dev));
+            strlcpy(suri->pcap_dev, optarg,
+                    ((strlen(optarg) < sizeof(suri->pcap_dev)) ?
+                     (strlen(optarg) + 1) : sizeof(suri->pcap_dev)));
         }
     } else if (suri->run_mode == RUNMODE_AFP_DEV) {
         SCLogWarning(SC_WARN_PCAP_MULTI_DEV_EXPERIMENTAL, "using "
@@ -1151,7 +1155,7 @@ static int ParseCommandLinePcapLive(SCInstance *suri, const char *optarg)
         if (strlen(optarg) > 9 && strncmp(optarg, "DeviceNPF", 9) == 0) {
             snprintf(suri->pcap_dev, sizeof(suri->pcap_dev), "\\Device\\NPF%s", optarg+9);
         } else {
-            strlcpy(suri->pcap_dev, optarg, sizeof(suri->pcap_dev));
+            strlcpy(suri->pcap_dev, optarg, ((strlen(optarg) < sizeof(suri->pcap_dev)) ? (strlen(optarg)+1) : (sizeof(suri->pcap_dev))));
             PcapTranslateIPToDevice(suri->pcap_dev, sizeof(suri->pcap_dev));
         }
 
@@ -1165,9 +1169,7 @@ static int ParseCommandLinePcapLive(SCInstance *suri, const char *optarg)
 
     if (suri->run_mode == RUNMODE_UNKNOWN) {
         suri->run_mode = RUNMODE_PCAP_DEV;
-        if (optarg) {
-            LiveRegisterDevice(suri->pcap_dev);
-        }
+        LiveRegisterDevice(suri->pcap_dev);
     } else if (suri->run_mode == RUNMODE_PCAP_DEV) {
 #ifdef OS_WIN32
         SCLogError(SC_ERR_PCAP_MULTI_DEV_NO_SUPPORT, "pcap multi dev "
@@ -2376,7 +2378,6 @@ static int PostConfLoadedSetup(SCInstance *suri)
     SCProtoNameInit();
 
     TagInitCtx();
-    PacketAlertTagInit();
     ThresholdInit();
     HostBitInitCtx();
     IPPairBitInitCtx();

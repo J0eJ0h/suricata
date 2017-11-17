@@ -15,12 +15,6 @@
  * 02110-1301, USA.
  */
 
-/**
- * \file
- *
- * \author FirstName LastName <yourname@domain>
- */
-
 #ifndef __DETECT_TEMPLATE_BUFFER_H__
 #define __DETECT_TEMPLATE_BUFFER_H__
 

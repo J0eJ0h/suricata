@@ -228,11 +228,7 @@ void StreamTcpSessionClear(void *ssnptr)
 
     StreamTcpSessionCleanup(ssn);
 
-    /* HACK: don't loose track of thread id */
-    PoolThreadReserved a = ssn->res;
     memset(ssn, 0, sizeof(TcpSession));
-    ssn->res = a;
-
     PoolThreadReturn(ssn_pool, ssn);
 #ifdef DEBUG
     SCMutexLock(&ssn_pool_mutex);

@@ -15,12 +15,6 @@
  * 02110-1301, USA.
  */
 
-/**
- * \file
- *
- * \author FirstName LastName <yourname@domain>
- */
-
 #ifndef __APP_LAYER_TEMPLATE_H__
 #define __APP_LAYER_TEMPLATE_H__
 

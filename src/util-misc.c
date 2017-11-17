@@ -204,6 +204,53 @@ int ParseSizeStringU64(const char *size, uint64_t *res)
     return 0;
 }
 
+// TODO: This should be unified with DetectSidSetup from detect-sid.c
+int SidFromString (char *sidstr, uint32_t* sid)
+{
+    char *str = sidstr;
+    char duped = 0;
+
+    if(unlikely(sid == NULL)) {
+        return -1;
+    }
+
+    /* Strip leading and trailing "s. */
+    if (sidstr[0] == '\"') {
+        str = SCStrdup(sidstr + 1);
+        if (unlikely(str == NULL)) {
+            return -1;
+        }
+        if (strlen(str) && str[strlen(str) - 1] == '\"') {
+            str[strlen(str) - 1] = '\0';
+        }
+        duped = 1;
+    }
+
+    unsigned long id = 0;
+    char *endptr = NULL;
+    id = strtoul(sidstr, &endptr, 10);
+    if (endptr == NULL || *endptr != '\0') {
+        SCLogError(SC_ERR_INVALID_SIGNATURE, "invalid character as arg "
+                   "to sid keyword");
+        goto error;
+    }
+    if (id >= UINT_MAX) {
+        SCLogError(SC_ERR_INVALID_NUMERIC_VALUE, "sid value to high, max %u", UINT_MAX);
+        goto error;
+    }
+
+    *sid = (uint32_t)id;
+
+    if (duped)
+        SCFree(str);
+    return 0;
+
+ error:
+    if (duped)
+        SCFree(str);
+    return -1;
+}
+
 /*********************************Unittests********************************/
 
 #ifdef UNITTESTS

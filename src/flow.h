@@ -29,6 +29,7 @@
 #include "util-atomic.h"
 #include "detect-tag.h"
 #include "util-optimize.h"
+#include "timemachine-packet.h"
 
 /* Part of the flow structure, so we declare it here.
  * The actual declaration is in app-layer-parser.c */
@@ -76,6 +77,8 @@ typedef struct AppLayerParserState_ AppLayerParserState;
 #define FLOW_TOCLIENT_DROP_LOGGED         0x00004000
 /** alproto detect done.  Right now we need it only for udp */
 #define FLOW_ALPROTO_DETECT_DONE          0x00008000
+/** At least one packet in the flow contained an alert */
+#define FLOW_CONTAINS_ALERTS              0x00010000
 
 // vacany 1x
 
@@ -193,6 +196,9 @@ typedef struct AppLayerParserState_ AppLayerParserState;
     #endif
 #endif
 
+int SCMutexLockFlow(pthread_mutex_t* mutex);
+int SCMutexUnlockFlow(pthread_mutex_t* mutex);
+
 #ifdef FLOWLOCK_RWLOCK
     #define FLOWLOCK_INIT(fb) SCRWLockInit(&(fb)->r, NULL)
     #define FLOWLOCK_DESTROY(fb) SCRWLockDestroy(&(fb)->r)
@@ -204,11 +210,11 @@ typedef struct AppLayerParserState_ AppLayerParserState;
 #elif defined FLOWLOCK_MUTEX
     #define FLOWLOCK_INIT(fb) SCMutexInit(&(fb)->m, NULL)
     #define FLOWLOCK_DESTROY(fb) SCMutexDestroy(&(fb)->m)
-    #define FLOWLOCK_RDLOCK(fb) SCMutexLock(&(fb)->m)
-    #define FLOWLOCK_WRLOCK(fb) SCMutexLock(&(fb)->m)
+    #define FLOWLOCK_RDLOCK(fb) SCMutexLockFlow(&(fb)->m)
+    #define FLOWLOCK_WRLOCK(fb) SCMutexLockFlow(&(fb)->m)
     #define FLOWLOCK_TRYRDLOCK(fb) SCMutexTrylock(&(fb)->m)
     #define FLOWLOCK_TRYWRLOCK(fb) SCMutexTrylock(&(fb)->m)
-    #define FLOWLOCK_UNLOCK(fb) SCMutexUnlock(&(fb)->m)
+    #define FLOWLOCK_UNLOCK(fb) SCMutexUnlockFlow(&(fb)->m)
 #else
     #error Enable FLOWLOCK_RWLOCK or FLOWLOCK_MUTEX
 #endif
@@ -411,6 +417,13 @@ typedef struct Flow_
     uint32_t tosrcpktcnt;
     uint64_t todstbytecnt;
     uint64_t tosrcbytecnt;
+    
+    /** List of time machine related data structures for
+     *  a given flow */
+    int32_t tm_pkt_cnt;
+    TimeMachinePackets tm_pkts;
+    SCMutex tm_m;
+    
 } Flow;
 
 enum {
@@ -456,6 +469,7 @@ static inline void FlowSetNoPayloadInspectionFlag(Flow *);
 int FlowGetPacketDirection(const Flow *, const Packet *);
 
 void FlowCleanupAppLayer(Flow *);
+void FlowCleanupTimeMachine(Flow *);
 
 /** \brief Set the No Packet Inspection Flag without locking the flow.
  *
@@ -534,18 +548,6 @@ static inline void FlowDeReference(Flow **d)
         FlowDecrUsecnt(*d);
         *d = NULL;
     }
-}
-
-/** \brief create a flow id that is as unique as possible
- *  \retval flow_id signed 64bit id
- *  \note signed because of the signedness of json_integer_t in
- *        the json output
- */
-static inline int64_t FlowGetId(const Flow *f)
-{
-    return (int64_t)f->flow_hash << 31 |
-        (int64_t)(f->startts.tv_sec & 0x0000FFFF) << 16 |
-        (int64_t)(f->startts.tv_usec & 0x0000FFFF);
 }
 
 int FlowClearMemory(Flow *,uint8_t );

@@ -34,5 +34,9 @@ int PacketAlertCheck(Packet *, uint32_t);
 int PacketAlertRemove(Packet *, uint16_t);
 void PacketAlertTagInit(void);
 PacketAlert *PacketAlertGetTag(void);
+int DetectPcapSigsHashInit(DetectEngineCtx *de_ctx);
+void DetectPcapSigsHashFree(DetectEngineCtx *de_ctx);
+
+
 
 #endif /* __DETECT_ENGINE_ALERT_H__ */

@@ -930,6 +930,18 @@ static int DetectAddressParse2(const DetectEngineCtx *de_ctx,
                     DetectAddressHeadCleanup(&tmp_gh);
                     DetectAddressHeadCleanup(&tmp_ghn);
                 }
+                // if we aren't handling a negated group, apply and
+                // drop all negations so far to limit their scope
+                if(n_set == 0) {
+                    // merge negations we've seen so far
+                    if (DetectAddressMergeNot(gh, ghn) < 0)
+                        goto error;
+
+                    SCLogDebug("merged before discard succesfully");
+
+                    // discard all negations
+                    DetectAddressHeadCleanup(ghn);
+                }
                 n_set = 0;
             }
             depth--;

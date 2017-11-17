@@ -695,13 +695,18 @@ end:
 
 static inline void DetectPrefilterMergeSort(DetectEngineCtx *de_ctx,
                                             DetectEngineThreadCtx *det_ctx)
+//                                            SigGroupHead *sgh)
 {
     SigIntId mpm, nonmpm;
     det_ctx->match_array_cnt = 0;
     SigIntId *mpm_ptr = det_ctx->pmq.rule_id_array;
     SigIntId *nonmpm_ptr = det_ctx->non_mpm_id_array;
+    //SigIntId *nonmpm_ptr = sgh->non_mpm_id_array;
     uint32_t m_cnt = det_ctx->pmq.rule_id_array_cnt;
+    //uint32_t n_cnt = sgh->non_mpm_id_cnt;
     uint32_t n_cnt = det_ctx->non_mpm_id_cnt;
+    SCLogDebug("PMQ rule id array count %d", det_ctx->pmq.rule_id_array_cnt);
+//    SCLogDebug("SGH non-MPM id count %d", sgh->non_mpm_id_cnt);
     SigIntId *final_ptr;
     uint32_t final_cnt;
     SigIntId id;
@@ -709,8 +714,6 @@ static inline void DetectPrefilterMergeSort(DetectEngineCtx *de_ctx,
     Signature **sig_array = de_ctx->sig_array;
     Signature **match_array = det_ctx->match_array;
     Signature *s;
-
-    SCLogDebug("PMQ rule id array count %d", det_ctx->pmq.rule_id_array_cnt);
 
     /* Load first values. */
     if (likely(m_cnt)) {
@@ -1816,12 +1819,7 @@ end:
             }
         }
 
-        /* HACK: prevent the wrong sgh (or NULL) from being stored in the
-         * flow's sgh pointers */
-        if (PKT_IS_ICMPV4(p) && ICMPV4_DEST_UNREACH_IS_VALID(p)) {
-            ; /* no-op */
-
-        } else if (!(sms_runflags & SMS_USE_FLOW_SGH)) {
+        if (!(sms_runflags & SMS_USE_FLOW_SGH)) {
             if ((p->flowflags & FLOW_PKT_TOSERVER) && !(pflow->flags & FLOW_SGH_TOSERVER)) {
                 /* first time we see this toserver sgh, store it */
                 pflow->sgh_toserver = det_ctx->sgh;
@@ -3507,6 +3505,9 @@ int SigAddressPrepareStage1(DetectEngineCtx *de_ctx)
     uint32_t cnt_applayer = 0;
     uint32_t cnt_deonly = 0;
 
+    //DetectAddressPrintMemory();
+    //DetectPortPrintMemory();
+
     if (!(de_ctx->flags & DE_QUIET)) {
         SCLogDebug("building signature grouping structure, stage 1: "
                    "preprocessing rules...");
@@ -3598,6 +3599,9 @@ int SigAddressPrepareStage1(DetectEngineCtx *de_ctx)
 
         de_ctx->sig_cnt++;
     }
+
+    //DetectAddressPrintMemory();
+    //DetectPortPrintMemory();
 
     if (!(de_ctx->flags & DE_QUIET)) {
         SCLogInfo("%" PRIu32 " signatures processed. %" PRIu32 " are IP-only "
@@ -4100,7 +4104,7 @@ int SigGroupBuild(DetectEngineCtx *de_ctx)
         SCLogError(SC_ERR_DETECT_PREPARE, "initializing the detection engine failed");
         exit(EXIT_FAILURE);
     }
-
+//exit(0);
     if (SigAddressPrepareStage2(de_ctx) != 0) {
         SCLogError(SC_ERR_DETECT_PREPARE, "initializing the detection engine failed");
         exit(EXIT_FAILURE);
@@ -4115,8 +4119,8 @@ int SigGroupBuild(DetectEngineCtx *de_ctx)
         exit(EXIT_FAILURE);
     }
 
-#ifdef __SC_CUDA_SUPPORT__
     if (de_ctx->sgh_mpm_context == ENGINE_SGH_MPM_FACTORY_CONTEXT_SINGLE) {
+#ifdef __SC_CUDA_SUPPORT__
         if (PatternMatchDefaultMatcher() == MPM_AC_CUDA) {
             /* setting it to default.  You've gotta remove it once you fix the state table thing */
             SCACConstructBoth16and32StateTables();
@@ -4133,7 +4137,8 @@ int SigGroupBuild(DetectEngineCtx *de_ctx)
                 exit(EXIT_FAILURE);
             }
         }
-
+#endif
+#ifdef __SC_CUDA_SUPPORT__
         if (PatternMatchDefaultMatcher() == MPM_AC_CUDA) {
             int r = SCCudaCtxPopCurrent(NULL);
             if (r < 0) {
@@ -4145,11 +4150,13 @@ int SigGroupBuild(DetectEngineCtx *de_ctx)
         /* too late to call this either ways.  Should be called post ac goto.
          * \todo Support this. */
         DetermineCudaStateTableSize(de_ctx);
-    }
 #endif
-
+    }
     DetectMpmPrepareBuiltinMpms(de_ctx);
     DetectMpmPrepareAppMpms(de_ctx);
+
+//    DetectAddressPrintMemory();
+//    DetectPortPrintMemory();
 
     if (SigMatchPrepare(de_ctx) != 0) {
         SCLogError(SC_ERR_DETECT_PREPARE, "initializing the detection engine failed");
