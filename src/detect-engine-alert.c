@@ -106,7 +106,13 @@ int DetectPcapSigsHashInit(DetectEngineCtx *de_ctx)
                     }
                 }
             }
+        } else {
+            HashTableFree(de_ctx->pcap_sigs_hash_table);
+            de_ctx->pcap_sigs_hash_table = NULL;
         }
+    } else {
+        HashTableFree(de_ctx->pcap_sigs_hash_table);
+        de_ctx->pcap_sigs_hash_table = NULL;
     }
 
     return 0;
@@ -408,7 +414,8 @@ void PacketAlertFinalize(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx
         i = 0;
         while ( i < p->alerts.cnt) {
             uint *psid =  &(p->alerts.alerts[i].s->id);
-            if (HashTableLookup(de_ctx->pcap_sigs_hash_table, psid, sizeof(*psid)) != NULL) {
+            if (de_ctx->pcap_sigs_hash_table == NULL ||
+                    HashTableLookup(de_ctx->pcap_sigs_hash_table, psid, sizeof(*psid)) != NULL) {
                 p->flow->flags |= FLOW_CONTAINS_ALERTS;
                 break;
             }
